@@ -1,7 +1,8 @@
 #!/usr/bin/python3
 """
-Demonstrates creating a 3d SDF
-displays it in rviz
+creating a 3d random forest
+computing the sdf and sdf gradient
+save to file
 """
 import ros_numpy
 import rospy
@@ -15,9 +16,22 @@ from visualization_msgs.msg import MarkerArray, Marker
 
 def create_point_cloud():
     rng = np.random.RandomState(0)
-    box1_points = rng.uniform([0.5, 0.5, 0], [0.7, 0.6, 0.5], [100, 3])
-    box2_points = rng.uniform([0.5, 0.2, 0.25], [0.75, 0.4, 0.5], [100, 3])
-    return np.concatenate([box1_points, box2_points], axis=0)
+    random_tree_num = 10
+    points_per_tree = 50
+    tree_points = []
+    for i in range(random_tree_num):
+        # randomly generate root poses on xy plane
+        root_pose = rng.uniform([-10.0, -10.0, 0.0], [60.0, 10.0, 0.0], [1, 3])
+        # randomly generate tree height
+        tree_height = rng.uniform(1.0, 10.0)
+        # randomly generate tree radius
+        tree_radius = rng.uniform(0.1, 0.5)
+        # generate tree points
+        for j in range(points_per_tree):
+            # randomly generate tree points
+            tree_point = rng.uniform([-tree_radius, -tree_radius, -10.0], [tree_radius, tree_radius, tree_height], [1, 3])
+            tree_points.append(root_pose + tree_point)
+    return np.concatenate(tree_points, axis=0)
 
 
 def point_cloud_to_voxel_grid(pc: np.ndarray, shape, res, origin_point):
@@ -30,6 +44,17 @@ def point_cloud_to_voxel_grid(pc: np.ndarray, shape, res, origin_point):
     return vg
 
 
+def compute_param(res, points):
+    min_x = min(points[:, 0])
+    max_x = max(points[:, 0])
+    min_y = min(points[:, 1])
+    max_y = max(points[:, 1])
+    min_z = min(points[:, 2])
+    max_z = max(points[:, 2])
+    shape = [int((max_x - min_x) / res) + 1, int((max_y - min_y) / res) + 1, int((max_z - min_z) / res) + 1]
+    return shape, np.array([min_x, min_y, min_z], dtype=np.float32)
+
+
 def visualize_point_cloud(pub: rospy.Publisher, pc: np.ndarray):
     list_of_tuples = [tuple(point) for point in pc]
     dtype = [('x', np.float32), ('y', np.float32), ('z', np.float32)]
@@ -40,7 +65,11 @@ def visualize_point_cloud(pub: rospy.Publisher, pc: np.ndarray):
 
 def visualize_sdf(pub, sdf: np.ndarray, shape, res, origin_point):
     points = get_grid_points(origin_point, res, shape)
-    list_of_tuples = [(p[0], p[1], p[2], d) for p, d in zip(points.reshape([-1, 3]), sdf.flatten())]
+    list_of_tuples = []
+    for x in range(shape[1]):
+        for y in range(shape[0]):
+            for z in range(shape[2]):
+                list_of_tuples.append((points[x, y, z, 0], points[x, y, z, 1], points[x, y, z, 2], sdf[y, x, z]))
     dtype = [('x', np.float32), ('y', np.float32), ('z', np.float32), ('distance', np.float32)]
     np_record_array = np.array(list_of_tuples, dtype=dtype)
     msg = ros_numpy.msgify(PointCloud2, np_record_array, frame_id='world', stamp=rospy.Time.now())
@@ -50,7 +79,7 @@ def visualize_sdf(pub, sdf: np.ndarray, shape, res, origin_point):
 def get_grid_points(origin_point, res, shape):
     indices = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]), np.arange(shape[2]))
     indices = np.stack(indices, axis=-1)
-    points = (indices * res) - origin_point
+    points = (indices * res) + origin_point
     return points
 
 
@@ -95,7 +124,7 @@ def plot_arrows_rviz(pub, positions, directions):
 
 
 def main():
-    rospy.init_node("sdf_demo_rviz")
+    rospy.init_node("random_forest_sdf")
 
     pc_pub = rospy.Publisher("points", PointCloud2, queue_size=10)
     sdf_pub = rospy.Publisher("sdf", PointCloud2, queue_size=10)
@@ -105,21 +134,32 @@ def main():
 
     pc = create_point_cloud()
 
-    res = 0.04
-    shape = [25, 20, 15]
-    origin_point = np.array([0, 0, 0], dtype=np.float32)
+    res = 0.2
+    # shape, origin_point = compute_param(res, pc)
+    origin_point = np.array([-10.0, -12.0, -10.0], dtype=np.float32)
+    shape = [350, 240, 110]
     vg = point_cloud_to_voxel_grid(pc, shape, res, origin_point)
+    rospy.loginfo("Computing sdf...")
     sdf, sdf_grad = compute_sdf_and_gradient(vg, res, origin_point)
 
-    grid_points = get_grid_points(origin_point, res, shape)
-    subsample = 8
-    grad_scale = 0.02
+    rospy.loginfo("Saving sdf to file...")
+    prifix = "/home/dreaver/AcroflightDiffusionModel/save/"
+    np.save(prifix + "sdf_param.npy", np.asarray([res, origin_point[0], origin_point[1], origin_point[2], shape[0], shape[1], shape[2]]))
+    np.save(prifix + "sdf.npy", sdf)
+    np.save(prifix + "sdf_grad.npy", sdf_grad)
+    np.save(prifix + "pc.npy", pc)
 
-    while not rospy.is_shutdown():
-        visualize_point_cloud(pc_pub, pc)
-        visualize_sdf(sdf_pub, sdf, shape, res, origin_point)
-        plot_arrows_rviz(sdf_grad_pub, grid_points.reshape([-1, 3])[::subsample], sdf_grad.reshape([-1, 3])[::subsample] * grad_scale)
-        rospy.sleep(0.1)
+    # grid_points = get_grid_points(origin_point, res, shape)
+    # subsample = 8
+    # grad_scale = 0.02
+
+    # rospy.loginfo("Visualize sdf...")
+
+    # while not rospy.is_shutdown():
+    #     visualize_point_cloud(pc_pub, pc)
+    #     visualize_sdf(sdf_pub, sdf, shape, res, origin_point)
+    #     plot_arrows_rviz(sdf_grad_pub, grid_points.reshape([-1, 3])[::subsample], sdf_grad.reshape([-1, 3])[::subsample] * grad_scale)
+    #     rospy.sleep(0.1)
 
 
 if __name__ == '__main__':
