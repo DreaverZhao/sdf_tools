@@ -1,0 +1,23 @@
+<launch>
+    <node pkg="sdf_tools" type="sdf_randomforest.py" name="random_forest" output="screen">
+        <param name="save_path" value="$(find sdf_tools)/../../../save/"/>
+        <!-- The following parameters are used to generate a random forest -->
+        <param name="min_x" value="-10.0"/>
+        <param name="max_x" value="60.0"/>
+        <param name="min_y" value="-10.0"/>
+        <param name="max_y" value="10.0"/>
+        <param name="min_z" value="-10.0"/>
+        <param name="max_z" value="15.0"/>
+        <param name="num_trees" value="10"/>
+        <param name="points_per_tree" value="50"/>
+        <param name="tree_radius" value="1.0"/>
+        <!-- The following parameters are used to generate sdf from the random forest -->
+        <param name="resolution" value="0.2"/>
+        <param name="min_x_sdf" value="-10.0"/>
+        <param name="max_x_sdf" value="60.0"/>
+        <param name="min_y_sdf" value="-20.0"/>
+        <param name="max_y_sdf" value="20.0"/>
+        <param name="min_z_sdf" value="-10.0"/>
+        <param name="max_z_sdf" value="15.0"/>
+    </node>
+</launch>
